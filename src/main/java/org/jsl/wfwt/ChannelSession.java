@@ -56,7 +56,7 @@ public class ChannelSession implements Session.Listener
     private long [] m_pingSendTime;
     private long m_ping;
 
-    private boolean m_sendAudioFrame;
+    private boolean m_sendAudio;
 
     private String getLogPrefix()
     {
@@ -114,10 +114,11 @@ public class ChannelSession implements Session.Listener
         final int id = Protocol.Pong.getId(msg);
         final int idx = (id % m_pingSendTime.length);
         final long ping = (System.currentTimeMillis() - m_pingSendTime[idx]) / 2;
+        //Log.d(LOG_TAG, "ping " + id + ": delay=" + ping + "ms");
         if (Math.abs(ping - m_ping) > PING_THRESHOLD)
         {
             m_ping = ping;
-            m_channel.setPing(m_serviceName, this, ping);
+            m_channel.setPing(m_serviceName, m_session, ping);
         }
     }
 
@@ -127,12 +128,7 @@ public class ChannelSession implements Session.Listener
         {
             final String stationName = Protocol.StationName.getStationName(msg);
             if (stationName.length() > 0)
-            {
-                if (m_serviceName == null)
-                    m_channel.setStationName(this, stationName);
-                else
-                    m_channel.setStationName(m_serviceName, stationName);
-            }
+                m_channel.setStationName(m_serviceName, m_session, stationName);
         }
         catch (final CharacterCodingException ex)
         {
@@ -146,9 +142,15 @@ public class ChannelSession implements Session.Listener
         switch (messageID)
         {
             case Protocol.AudioFrame.ID:
+                final boolean batchStart = Protocol.AudioFrame.getBatchStart(msg);
                 final RetainableByteBuffer audioFrame = Protocol.AudioFrame.getAudioData(msg);
-                m_audioPlayer.play(audioFrame);
-                audioFrame.release();
+                if (audioFrame == null)
+                    m_audioPlayer.batchEnd();
+                else
+                {
+                    m_audioPlayer.play(batchStart, audioFrame);
+                    audioFrame.release();
+                }
             break;
 
             case Protocol.Ping.ID:
@@ -169,7 +171,7 @@ public class ChannelSession implements Session.Listener
         }
     }
 
-    public static StreamDefragger createStreamDefragger()
+    static StreamDefragger createStreamDefragger()
     {
         return new StreamDefragger( Protocol.Message.HEADER_SIZE )
         {
@@ -254,29 +256,24 @@ public class ChannelSession implements Session.Listener
             m_timerHandler = null;
         }
 
-        m_channel.removeSession( m_serviceName, this );
-        m_sessionManager.removeSession( this );
+        m_channel.removeSession(m_serviceName, m_session);
+        m_sessionManager.removeSession(this);
         m_audioPlayer.stopAndWait();
         m_streamDefragger.close();
     }
 
-    public final int sendMessage( RetainableByteBuffer msg )
+    void sendAudioFrame(RetainableByteBuffer audioFrame, boolean ptt)
     {
-        return m_session.sendData( msg );
-    }
-
-    public final void sendAudioFrame( RetainableByteBuffer audioFrame, boolean ptt )
-    {
-        if (ptt || m_sendAudioFrame)
+        if (ptt || m_sendAudio)
             m_session.sendData( audioFrame );
     }
 
-    public final void setSendAudioFrame( boolean sendAudioFrame )
+    void setSendAudio(boolean sendAudioFrame)
     {
-        m_sendAudioFrame = sendAudioFrame;
+        m_sendAudio = sendAudioFrame;
     }
 
-    public SocketAddress getRemoteAddress()
+    SocketAddress getRemoteAddress()
     {
         return m_session.getRemoteAddress();
     }
